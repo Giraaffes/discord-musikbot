@@ -188,7 +188,7 @@ async function playPlaylist(msg, query) {
 	} else {
 		let search = await ytsr(query, {
 			gl: "DK",
-			limit: 30
+			limit: 20
 		});
 		
 		let results = search.items.filter(e => 
@@ -202,7 +202,7 @@ async function playPlaylist(msg, query) {
 		plUrl = results[0].url;
 	}
 	
-	let playlist = await ytpl(plUrl, {limit: 20});
+	let playlist = await ytpl(plUrl, {limit: 50});
 	let songs = playlist.items.sort((a, b) => a.index - b.index);
 	
 	let firstSong = await fetchSong(songs[0].shortUrl);
@@ -217,7 +217,7 @@ async function playPlaylist(msg, query) {
 		}
 	})();
 	
-	await msg.channel.send(`Playlisten 🎶 \`${playlist.title}\` 🎶 er tilføjet til køen!`);
+	await msg.channel.send(`Playlisten 💿 \`${playlist.title}\` 💿 er tilføjet til køen!`);
 	if (queue.length == songs.length) {
 		await msg.channel.send(`Afspiller 🎶 \`${queue[0].info.title}\` 🎶`);
 		audioPlayer.play(queue[0].resource);
