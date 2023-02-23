@@ -265,7 +265,7 @@ async function showQueueCmd(msg) {
 	
 	let str = "\nSådan her ser køen ud:"; 
 	
-	str += `\n1. 🎶 \`${queue[0].info.title}\` 🎶`;
+	str += `\n1. 🔊 \`${queue[0].info.title}\` 🔊`;
 	for (let i = 1; i < queue.length; i++) {
 		str += `\n${i+1}. \`${queue[i].info.title}\``
 	}
