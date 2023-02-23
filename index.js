@@ -2,6 +2,7 @@ const discord = require("discord.js");
 const discordVoice = require('@discordjs/voice');
 const ytdl = require("ytdl-core");
 const ytsr = require("ytsr");
+const ytpl = require("ytpl");
 
 const token = "ODY2MzgzNDc4MjYyMzMzNDQx.GoqgJn.tgJ_PL_Lbs-L2gS-9dLr_ySTl-SLBLlFLS3Qhc";
 
@@ -30,6 +31,49 @@ let queue = [];
 let paused = false;
 let stopSilently = false;
 let currentChannel;
+
+
+function stopAudio(silent) {
+	if (silent) stopSilently = true;
+	audioPlayer.stop();
+}
+
+function songFinished() {
+	if (stopSilently) {
+		stopSilently = false;
+		return;
+	}
+	
+	if (queue.length > 0) queue.splice(0, 1);
+	if (queue.length == 0) {
+		currentChannel.send("Køen er tom!");
+	} else {
+		let nextSong = queue[0];
+		currentChannel.send(`🎶 Afspiller \`${nextSong.info.title}\` 🎶`);
+		audioPlayer.play(nextSong.resource);
+	}
+}
+
+
+async function fetchSong(url) {
+	let stream = ytdl(url, {
+		quality: "highestaudio",
+		filter: format => format.audioCodec == "opus",
+		highWaterMark: 1 << 25,
+		dlChunkSize: 0
+	});
+	
+	let infoPromise = new Promise(res => {
+		stream.on("info", (info, format) => res({info: info.videoDetails, format}));
+	});
+	let { info, format } = await infoPromise;
+	
+	let resource = discordVoice.createAudioResource(stream, {
+		inputType: format.container == "webm" ? discordVoice.StreamType.WebmOpus : discordVoice.StreamType.OggOpus
+	});
+	
+	return {info, resource};
+}
 
 
 async function joinCmd(msg) {
@@ -122,28 +166,61 @@ async function playCmd(msg, query) {
 		url = results[0].url;
 	}
 	
-	let stream = ytdl(url, {
-		quality: "highestaudio",
-		filter: format => format.audioCodec == "opus",
-		highWaterMark: 1 << 25,
-		dlChunkSize: 0
-	});
-	
-	let infoPromise = new Promise(res => {
-		stream.on("info", (info, format) => res({info: info.videoDetails, format}));
-	});
-	let { info, format } = await infoPromise;
-	
-	let resource = discordVoice.createAudioResource(stream, {
-		inputType: format.container == "webm" ? discordVoice.StreamType.WebmOpus : discordVoice.StreamType.OggOpus
-	});
-	
-	queue.push({ info, resource });
+	let song = fetchSong(url);
+	queue.push(song);
 	if (queue.length == 1) {
-		await msg.channel.send(`Afspiller 🎶 \`${info.title}\` 🎶`);
-		audioPlayer.play(resource);
+		await msg.channel.send(`Afspiller 🎶 \`${song.info.title}\` 🎶`);
+		audioPlayer.play(song.resource);
 	} else {
-		await msg.channel.send(`🎶 \`${info.title}\` 🎶 er tilføjet til køen!`);
+		await msg.channel.send(`🎶 \`${song.info.title}\` 🎶 er tilføjet til køen!`);
+	}
+}
+
+async function playPlaylist(msg, query) {
+	if (!connections.has(msg.guild.id) && !(await joinCmd(msg))) return;
+	
+	msg.channel.sendTyping()
+	
+	let plUrl;
+	let queryUrlMatch = query.match(ytUrlRegex);
+	if (queryUrlMatch) {
+		plUrl = queryUrlMatch[0];
+	} else {
+		let search = await ytsr(query, {
+			gl: "DK",
+			limit: 30
+		});
+		
+		let results = search.items.filter(e => 
+			e.type == "playlist"
+		)
+		if (results.length == 0) {
+			await msg.channel.send("Den playliste kan jeg ikke finde :(");
+			return;
+		}
+		
+		plUrl = results[0].url;
+	}
+	
+	let playlist = await ytpl(plUrl, {limit: 20});
+	let songs = playlist.items.sort((a, b) => a.index - b.index);
+	
+	let firstSong = await fetchSong(songs[0].shortUrl);
+	queue.push(firstSong);
+	
+	let shadows = songs.slice(1).map(s => { return {info: {title: s.title}}; });
+	queue.push(...shadows);
+	(async () => {
+		for (let i = 1; i < songs.length; i++) {
+			let queueIndex = queue.length - songs.length + i;
+			queue[queueIndex] = await fetchSong(songs[i].shortUrl);
+		}
+	})();
+	
+	await msg.channel.send(`Playlisten 🎶 \`${playlist.title}\` 🎶 er tilføjet til køen!`);
+	if (queue.length == songs.length) {
+		await msg.channel.send(`Afspiller 🎶 \`${queue[0].info.title}\` 🎶`);
+		audioPlayer.play(queue[0].resource);
 	}
 }
 
@@ -219,27 +296,6 @@ async function showSongCmd(msg) {
 	}
 }
 
-function stopAudio(silent) {
-	if (silent) stopSilently = true;
-	audioPlayer.stop();
-}
-
-function songFinished() {
-	if (stopSilently) {
-		stopSilently = false;
-		return;
-	}
-	
-	if (queue.length > 0) queue.splice(0, 1);
-	if (queue.length == 0) {
-		currentChannel.send("Køen er tom!");
-	} else {
-		let nextSong = queue[0];
-		currentChannel.send(`🎶 Afspiller \`${nextSong.info.title}\` 🎶`);
-		audioPlayer.play(nextSong.resource);
-	}
-}
-
 
 bot.on("ready", async () => {
 	console.log("Ready");
@@ -296,6 +352,10 @@ bot.on("messageCreate", async (msg) => {
 			case "sang":
 			case "sangnavn":
 				await showSongCmd(msg); break;
+			case "playlist":
+			case "playliste":
+			case "afspilplayliste":
+				await playPlaylist(msg, args); break;
 			default: return;
 		}
 	} catch (e) {
