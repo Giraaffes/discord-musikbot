@@ -49,7 +49,7 @@ function songFinished() {
 		currentChannel.send("Køen er tom!");
 	} else {
 		let nextSong = queue[0];
-		currentChannel.send(`🎶 Afspiller \`${nextSong.info.title}\` 🎶`);
+		currentChannel.send(`Afspiller 🎶 \`${nextSong.info.title}\` 🎶`);
 		audioPlayer.play(nextSong.resource);
 	}
 }
