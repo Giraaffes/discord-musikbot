@@ -1,14 +1,19 @@
 const discord = require("discord.js");
 const discordVoice = require('@discordjs/voice');
+const discordToken = "ODY2MzgzNDc4MjYyMzMzNDQx.GoqgJn.tgJ_PL_Lbs-L2gS-9dLr_ySTl-SLBLlFLS3Qhc";
+
+const spotify = require("spotify-web-api-node");
+const clientId = "ef487cee65cd4e8199a5b5bb1cbf8b50";
+const clientSecret = "4f81fab39e8040648a007638baa04861";
+
 const ytdl = require("ytdl-core");
 const ytsr = require("ytsr");
 const ytpl = require("ytpl");
 
-const token = "ODY2MzgzNDc4MjYyMzMzNDQx.GoqgJn.tgJ_PL_Lbs-L2gS-9dLr_ySTl-SLBLlFLS3Qhc";
-
 const cmdRegex = /^\s*\$([\wæøå]+)\s*(.*)$/i;
 const ytUrlRegex = /^(?:http(?:s)?:\/\/)?(?:(?:www\.)?youtube\.com\/(?:watch\?v=|v\/)|youtu\.be\/)[^#&?\s]+/i;
-const musicVideoRegex = /music\s+video|official\s+video/i;
+const songFilterRegex = /music video|official video|live performance|\(live\)|full album|music festival/i;
+const spotifyPlaylistUrlRegex = /^(?:http(?:s)?:\/\/)?open\.spotify\.com\/playlist\/([^?]+)/;
 
 
 const bot = new discord.Client({
@@ -20,6 +25,8 @@ const bot = new discord.Client({
 		discord.GatewayIntentBits.MessageContent
 	]
 });
+
+const spotifyApi = new spotify({clientId, clientSecret});
 
 
 let voiceStates = new discord.Collection();
@@ -37,23 +44,6 @@ function stopAudio(silent) {
 	if (silent) stopSilently = true;
 	audioPlayer.stop();
 }
-
-function songFinished() {
-	if (stopSilently) {
-		stopSilently = false;
-		return;
-	}
-	
-	if (queue.length > 0) queue.splice(0, 1);
-	if (queue.length == 0) {
-		currentChannel.send("Køen er tom!");
-	} else {
-		let nextSong = queue[0];
-		currentChannel.send(`Afspiller 🎶 \`${nextSong.info.title}\` 🎶`);
-		audioPlayer.play(nextSong.resource);
-	}
-}
-
 
 async function fetchSong(url) {
 	let stream = ytdl(url, {
@@ -73,6 +63,20 @@ async function fetchSong(url) {
 	});
 	
 	return {info, resource};
+}
+
+async function quickSearchSong(name) {
+	let search = await ytsr(name, {
+		gl: "DK",
+		limit: 3
+	});
+	
+	let results = search.items.filter(e => 
+		e.type == "video" && !e.title.match(songFilterRegex)
+	)
+	if (results.length == 0) return null;
+	let song = await fetchSong(results[0].url);
+	return song;
 }
 
 
@@ -140,7 +144,7 @@ async function playCmd(msg, query) {
 	}
 	if (!connections.has(msg.guild.id) && !(await joinCmd(msg))) return;
 	
-	msg.channel.sendTyping()
+	msg.channel.sendTyping();
 	
 	let url;
 	let queryUrlMatch = query.match(ytUrlRegex);
@@ -154,9 +158,9 @@ async function playCmd(msg, query) {
 			limit: 10
 		});
 		
-		let isMusicVideoSearch = query.match(musicVideoRegex);
+		let isUnfilteredSearch = query.match(songFilterRegex);
 		let results = search.items.filter(e => 
-			e.type == "video" && (isMusicVideoSearch || !e.title.match(musicVideoRegex))
+			e.type == "video" && (isUnfilteredSearch || !e.title.match(songFilterRegex))
 		)
 		if (results.length == 0) {
 			await msg.channel.send("Den sang kan jeg ikke finde :(");
@@ -179,7 +183,7 @@ async function playCmd(msg, query) {
 async function playPlaylist(msg, query) {
 	if (!connections.has(msg.guild.id) && !(await joinCmd(msg))) return;
 	
-	msg.channel.sendTyping()
+	msg.channel.sendTyping();
 	
 	let plUrl;
 	let queryUrlMatch = query.match(ytUrlRegex);
@@ -208,7 +212,7 @@ async function playPlaylist(msg, query) {
 	let firstSong = await fetchSong(songs[0].shortUrl);
 	queue.push(firstSong);
 	
-	let shadows = songs.slice(1).map(s => { return {info: {title: s.title}}; });
+	let shadows = songs.slice(1).map(s => { return {info: {title: `${s.title} (ikke downloadet)`} }; });
 	queue.push(...shadows);
 	(async () => {
 		for (let i = 1; i < songs.length; i++) {
@@ -221,6 +225,70 @@ async function playPlaylist(msg, query) {
 	if (queue.length == songs.length) {
 		await msg.channel.send(`Afspiller 🎶 \`${queue[0].info.title}\` 🎶`);
 		audioPlayer.play(queue[0].resource);
+	}
+}
+
+async function playSpotifyPlaylistCmd(msg, query) {
+	if (!connections.has(msg.guild.id) && !(await joinCmd(msg))) return;
+	
+	msg.channel.sendTyping();
+	
+	let urlMatch = query.match(spotifyPlaylistUrlRegex);
+	let playlistId = urlMatch ? urlMatch[1] : encodeURIComponent(query);
+	console.log(playlistId);
+	
+	let playlist;
+	try {
+		playlist = (await spotifyApi.getPlaylist(playlistId)).body;
+		await msg.channel.send(`Playlisten 💿 \`${playlist["name"]}\` 💿 af brugeren \`${playlist["owner"]["display_name"]}\` er tilføjet til køen!`);
+	} catch (e) {
+		if (e.body.error.message != "Invalid playlist Id") throw e;
+	}
+	
+	if (!playlist) {
+		let search = (await spotifyApi.searchPlaylists(query, {limit: 1, market: "DK"})).body;
+		let results = search["playlists"]["items"];
+		if (results.length > 0) {
+			let id = results[0]["id"];
+			playlist = (await spotifyApi.getPlaylist(id)).body;
+			await msg.channel.send(`Jeg fandt playlisten 💿 \`${playlist["name"]}\` 💿 af brugeren \`${playlist["owner"]["display_name"]}\`!`);
+		}
+	}
+	
+	if (!playlist) {
+		await msg.channel.send("Den playlist kunne jeg ikke finde :(");
+		return;
+	}
+	let songNames = playlist["tracks"]["items"].map(item => {
+		return `${item["track"]["artists"][0]["name"]} - ${item["track"]["name"]}`;
+	});
+	
+	let firstSong = await quickSearchSong(songNames[0]);
+	queue.push(firstSong);
+	
+	let shadows = songNames.slice(1).map(s => { return {info: {title: `${s} (ikke downloadet)`}}; });
+	queue.push(...shadows);
+	(async () => {
+		for (let i = 1; i < songNames.length; i++) {
+			let queueIndex = queue.length - songNames.length + i;
+			let song = await quickSearchSong(songNames[i]);
+			if (song) {
+				queue[queueIndex] = song;
+			} else {
+				await msg.channel.send(`Jeg kunne ikke finde 🎶 \`${songNames[i]}\` 🎶 på Youtube :(`);
+				queue[queueIndex] = {
+					title: `${songNames[i]} (kunne ikke findes)`,
+					invalid: true
+				}
+			}
+		}
+	})();
+	
+	if (queue.length == songNames.length) {
+		await msg.channel.send(`Afspiller 🎶 \`${queue[0].info.title}\` 🎶 mens resten af playlisten downloades...`);
+		audioPlayer.play(queue[0].resource);
+	} else {
+		await msg.channel.send("Playlisten downloades...");
 	}
 }
 
@@ -297,8 +365,18 @@ async function showSongCmd(msg) {
 }
 
 
-bot.on("ready", async () => {
-	console.log("Ready");
+async function refreshSpotify() {
+	let spotifyRes = (await spotifyApi.clientCredentialsGrant()).body;
+	spotifyApi.setAccessToken(spotifyRes["access_token"]);
+	console.log(`Spotify connected for ${spotifyRes["expires_in"]} seconds`);
+	
+	setTimeout(() => {
+		refreshSpotify();
+	}, spotifyRes["expires_in"] * 1000);
+}
+
+async function onReady() {
+	console.log("Bot ready");
 	
 	let guilds = await bot.guilds.fetch();
 	for (let guildId of guilds.keys()) {
@@ -306,10 +384,12 @@ bot.on("ready", async () => {
 		let voiceState = guild.voiceStates.resolve(bot.user.id);
 		if (voiceState) await voiceState.disconnect();
 	} 
-});
+	
+	await refreshSpotify();
+}
 
-bot.on("messageCreate", async (msg) => {
-	if (msg.author.bot) return;
+async function onMessage(msg) {
+		if (msg.author.bot) return;
 	
 	let match = msg.content.match(cmdRegex);
 	if (!match) return;
@@ -356,6 +436,8 @@ bot.on("messageCreate", async (msg) => {
 			case "playliste":
 			case "afspilplayliste":
 				await playPlaylist(msg, args); break;
+			case "spotify":
+				await playSpotifyPlaylistCmd(msg, args); break;
 			default: return;
 		}
 	} catch (e) {
@@ -363,9 +445,29 @@ bot.on("messageCreate", async (msg) => {
 		await msg.channel.send("Der skete en fejl... :(");
 	}
 	currentChannel = msg.channel;
-});
+}
 
-audioPlayer.on(discordVoice.AudioPlayerStatus.Idle, songFinished);
+function onSongFinished() {
+	if (stopSilently) {
+		stopSilently = false;
+		return;
+	}
+	
+	if (queue.length > 0) queue.splice(0, 1);
+	if (queue.length == 0) {
+		currentChannel.send("Køen er tom!");
+	} else {
+		while (queue[0] && queue[0].invalid) queue.splice(0, 1);
+		
+		let nextSong = queue[0];
+		currentChannel.send(`Afspiller 🎶 \`${nextSong.info.title}\` 🎶`);
+		audioPlayer.play(nextSong.resource);
+	}
+}
 
 
-bot.login(token);
+bot.on("ready", onReady);
+bot.on("messageCreate", onMessage);
+audioPlayer.on(discordVoice.AudioPlayerStatus.Idle, onSongFinished);
+
+bot.login(discordToken);
