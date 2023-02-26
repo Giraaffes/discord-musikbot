@@ -217,6 +217,7 @@ async function playPlaylist(msg, query) {
 	(async () => {
 		for (let i = 1; i < songs.length; i++) {
 			let queueIndex = queue.length - songs.length + i;
+			if (!queue[queueIndex]) break;
 			queue[queueIndex] = await fetchSong(songs[i].shortUrl);
 		}
 	})();
@@ -271,6 +272,8 @@ async function playSpotifyPlaylistCmd(msg, query) {
 	(async () => {
 		for (let i = 1; i < songNames.length; i++) {
 			let queueIndex = queue.length - songNames.length + i;
+			if (!queue[queueIndex]) break;
+			
 			let song = await quickSearchSong(songNames[i]);
 			if (song) {
 				queue[queueIndex] = song;
@@ -332,10 +335,21 @@ async function showQueueCmd(msg) {
 	}
 	
 	let str = "\nSådan her ser køen ud:"; 
-	
 	str += `\n1. 🔊 \`${queue[0].info.title}\` 🔊`;
+	
+	let stoppedEarlyIndex;
 	for (let i = 1; i < queue.length; i++) {
-		str += `\n${i+1}. \`${queue[i].info.title}\``
+		let songStr = `\n${i+1}. \`${queue[i].info.title}\``
+		if (i >= 20 || (str + songStr).length > 2000) {
+			stoppedEarlyIndex = i;
+			break;
+		} else {
+			str += songStr;
+		}
+	}
+	
+	if (stoppedEarlyIndex) {
+		str += `\nog ${queue.length - stoppedEarlyIndex} andre...`;
 	}
 	
 	await msg.channel.send(str);
